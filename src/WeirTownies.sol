@@ -40,6 +40,7 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
     uint256 public immutable MAX_SUPPLY;
     bytes32 public immutable PROVENANCE_HASH;
     uint8 public constant WALLET_CAP = 3; // general mints per wallet across the allowlist and public phases
+    uint96 public constant MAX_ROYALTY_BPS = 1000; // 10%
     bytes4 private constant ERC4906_INTERFACE = 0x49064906;
 
     Phase public phase;
@@ -50,6 +51,9 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
     ITownieRenderer public renderer; // optional on-chain metadata source; zero = use the base URI
     address public updater; // may emit metadata refresh events
     address public treasury; // receives withdrawals and royalties
+    uint96 public royaltyBps; // follows the treasury on every rotation
+    bool public metadataFrozen; // one way: no more base URI or renderer changes
+    bool public saleEnded; // one way: closes minting for good; unsold ids may then be swept by the owner
 
     uint32 public reserveSize; // ids 1..reserveSize belong to the owner (1/1s, team)
     uint32 public reserveMinted;
@@ -73,6 +77,9 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
     event UpdaterSet(address updater);
     event TreasurySet(address treasury);
     event Withdrawn(address to, uint256 amount);
+    event RoyaltySet(uint96 bps);
+    event MetadataFrozen();
+    event SaleEnded();
 
     error WrongPhase();
     error SoldOut();
@@ -88,6 +95,12 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
     error ZeroAddress();
     error ZeroQuantity();
     error TransferFailed();
+    error NothingToWithdraw();
+    error RoyaltyTooHigh();
+    error MetadataIsFrozen();
+    error SaleIsOver();
+    error SaleNotOver();
+    error Renounced();
 
     constructor(
         address owner_,
@@ -104,7 +117,8 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
         allowlistPrice = allowlistPrice_;
         publicPrice = publicPrice_;
         treasury = treasury_;
-        _setDefaultRoyalty(treasury_, 500); // 5%
+        royaltyBps = 500; // 5%
+        _setDefaultRoyalty(treasury_, 500);
     }
 
     // ---------- layout (owner, before the sale) ----------
@@ -169,7 +183,8 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
     function ownerMint(address to, uint32 qty) external onlyOwner nonReentrant {
         if (!poolsSealed) revert PoolsNotSealed();
         if (qty == 0) revert ZeroQuantity();
-        if (reserveMinted + qty > reserveSize) revert SoldOut();
+        if (saleEnded) revert SaleIsOver();
+        if (uint256(reserveMinted) + qty > reserveSize) revert SoldOut();
         uint32 first = reserveMinted + 1;
         reserveMinted += qty;
         for (uint32 i = 0; i < qty; i++) _safeMint(to, first + i);
@@ -179,6 +194,7 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
     ///         Free; open in both sale phases.
     function mintRole(uint256 poolIndex, bytes32[] calldata proof) external nonReentrant {
         if (!poolsSealed) revert PoolsNotSealed();
+        if (saleEnded) revert SaleIsOver();
         if (phase == Phase.Closed) revert WrongPhase();
         Pool storage p = _pools[poolIndex];
         if (roleClaimed[poolIndex][msg.sender]) revert AlreadyClaimed();
@@ -205,14 +221,46 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
 
     function _mintGeneral(uint8 qty, uint256 price) private {
         if (!poolsSealed) revert PoolsNotSealed();
+        if (saleEnded) revert SaleIsOver();
         if (qty == 0) revert ZeroQuantity();
-        if (generalMintedBy[msg.sender] + qty > WALLET_CAP) revert WalletCapReached();
-        if (generalMinted + qty > generalSize()) revert SoldOut();
+        if (uint256(generalMintedBy[msg.sender]) + qty > WALLET_CAP) revert WalletCapReached();
+        if (uint256(generalMinted) + qty > generalSize()) revert SoldOut();
         if (msg.value != price * qty) revert WrongPayment();
         generalMintedBy[msg.sender] += qty;
         uint256 first = uint256(generalStart) + generalMinted;
         generalMinted += qty;
         for (uint256 i = 0; i < qty; i++) _safeMint(msg.sender, first + i);
+    }
+
+    /// @notice Closes minting for good. After this the owner may sweep what nobody claimed, so the collection can
+    ///         still reach its full size; nothing minted is touched.
+    function endSale() external onlyOwner {
+        if (saleEnded) revert SaleIsOver();
+        saleEnded = true;
+        phase = Phase.Closed;
+        emit SaleEnded();
+        emit PhaseSet(Phase.Closed);
+    }
+
+    /// @notice After endSale: mints unsold general ids to `to`, oldest id first, up to `qty`.
+    function sweepGeneral(address to, uint32 qty) external onlyOwner nonReentrant {
+        if (!saleEnded) revert SaleNotOver();
+        if (qty == 0) revert ZeroQuantity();
+        if (uint256(generalMinted) + qty > generalSize()) revert SoldOut();
+        uint256 first = uint256(generalStart) + generalMinted;
+        generalMinted += qty;
+        for (uint256 i = 0; i < qty; i++) _safeMint(to, first + i);
+    }
+
+    /// @notice After endSale: mints the unclaimed ids of one role pool to `to`, up to `qty`.
+    function sweepPool(uint256 poolIndex, address to, uint32 qty) external onlyOwner nonReentrant {
+        if (!saleEnded) revert SaleNotOver();
+        if (qty == 0) revert ZeroQuantity();
+        Pool storage p = _pools[poolIndex];
+        if (uint256(p.minted) + qty > p.size) revert PoolExhausted();
+        uint256 first = uint256(p.start) + p.minted;
+        p.minted += qty;
+        for (uint256 i = 0; i < qty; i++) _safeMint(to, first + i);
     }
 
     function _onList(bytes32 root, bytes32[] calldata proof, address account) private pure returns (bool) {
@@ -243,6 +291,7 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
     // ---------- owner settings ----------
 
     function setPhase(Phase p) external onlyOwner {
+        if (saleEnded) revert SaleIsOver();
         phase = p;
         emit PhaseSet(p);
     }
@@ -259,13 +308,21 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
     }
 
     function setBaseURI(string calldata uri) external onlyOwner {
+        if (metadataFrozen) revert MetadataIsFrozen();
         _baseTokenURI = uri;
         emit BaseURISet(uri);
+    }
+
+    /// @notice One way: the base URI and the renderer can never change again.
+    function freezeMetadata() external onlyOwner {
+        metadataFrozen = true;
+        emit MetadataFrozen();
     }
 
     /// @notice Points tokenURI at an on-chain renderer (or back to the base URI with address(0)). Tell marketplaces
     ///         with refreshAll() afterwards.
     function setRenderer(address r) external onlyOwner {
+        if (metadataFrozen) revert MetadataIsFrozen();
         renderer = ITownieRenderer(r);
         emit RendererSet(r);
     }
@@ -278,16 +335,26 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
     function setTreasury(address t) external onlyOwner {
         if (t == address(0)) revert ZeroAddress();
         treasury = t;
+        _setDefaultRoyalty(t, royaltyBps);
         emit TreasurySet(t);
     }
 
     function setRoyalty(uint96 bps) external onlyOwner {
+        if (bps > MAX_ROYALTY_BPS) revert RoyaltyTooHigh();
+        royaltyBps = bps;
         _setDefaultRoyalty(treasury, bps);
+        emit RoyaltySet(bps);
+    }
+
+    /// @notice Ownership is handed over in two steps only; it is never given up.
+    function renounceOwnership() public view override onlyOwner {
+        revert Renounced();
     }
 
     /// @notice Sends the whole ETH balance to the treasury. Anyone may call; only the treasury ever receives.
     function withdraw() external nonReentrant {
         uint256 amount = address(this).balance;
+        if (amount == 0) revert NothingToWithdraw();
         (bool ok,) = treasury.call{value: amount}("");
         if (!ok) revert TransferFailed();
         emit Withdrawn(treasury, amount);

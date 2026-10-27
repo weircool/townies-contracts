@@ -345,6 +345,98 @@ contract WeirTowniesTest is Test {
         assertEq(amount, 0.05 ether);
     }
 
+    function test_royaltyFollowsTreasuryAndIsCapped() public {
+        address t2 = makeAddr("treasury2");
+        vm.prank(owner);
+        t.setTreasury(t2);
+        (address to, uint256 amount) = t.royaltyInfo(1, 1 ether);
+        assertEq(to, t2);
+        assertEq(amount, 0.05 ether);
+        vm.prank(owner);
+        vm.expectRevert(WeirTownies.RoyaltyTooHigh.selector);
+        t.setRoyalty(1001);
+        vm.prank(owner);
+        t.setRoyalty(1000);
+        (, amount) = t.royaltyInfo(1, 1 ether);
+        assertEq(amount, 0.1 ether);
+        vm.prank(owner);
+        t.setTreasury(treasury);
+        (to, amount) = t.royaltyInfo(1, 1 ether);
+        assertEq(to, treasury);
+        assertEq(amount, 0.1 ether);
+    }
+
+    function test_renounceReverts() public {
+        vm.prank(owner);
+        vm.expectRevert(WeirTownies.Renounced.selector);
+        t.renounceOwnership();
+        assertEq(t.owner(), owner);
+    }
+
+    function test_capRevertsCleanlyNotPanics() public {
+        vm.prank(owner);
+        t.setPhase(WeirTownies.Phase.Public);
+        vm.prank(eve);
+        t.mintPublic{value: PUB_PRICE * 3}(3);
+        vm.prank(eve);
+        vm.expectRevert(WeirTownies.WalletCapReached.selector);
+        t.mintPublic{value: PUB_PRICE * 255}(255); // would overflow uint8 arithmetic without the widening
+    }
+
+    function test_withdrawZeroReverts() public {
+        vm.expectRevert(WeirTownies.NothingToWithdraw.selector);
+        t.withdraw();
+    }
+
+    function test_freezeMetadata() public {
+        vm.prank(owner);
+        t.freezeMetadata();
+        vm.prank(owner);
+        vm.expectRevert(WeirTownies.MetadataIsFrozen.selector);
+        t.setBaseURI("x");
+        vm.prank(owner);
+        vm.expectRevert(WeirTownies.MetadataIsFrozen.selector);
+        t.setRenderer(address(1));
+    }
+
+    function test_endSaleAndSweep() public {
+        vm.prank(owner);
+        t.setPhase(WeirTownies.Phase.Allowlist);
+        vm.prank(bob);
+        t.mintRole(1, auditorProof[bob]); // pool 1 has 2, one claimed
+        vm.prank(alice);
+        t.mintAllowlist(1, generalProof[alice]);
+        vm.prank(owner);
+        vm.expectRevert(WeirTownies.SaleNotOver.selector);
+        t.sweepGeneral(owner, 1);
+        vm.prank(owner);
+        t.endSale();
+        assertTrue(t.saleEnded());
+        assertEq(uint256(t.phase()), uint256(WeirTownies.Phase.Closed));
+        vm.prank(owner);
+        vm.expectRevert(WeirTownies.SaleIsOver.selector);
+        t.setPhase(WeirTownies.Phase.Public); // the phase is final once the sale ended
+        vm.prank(carol);
+        vm.expectRevert(WeirTownies.SaleIsOver.selector);
+        t.mintRole(1, auditorProof[carol]);
+        vm.prank(owner);
+        t.sweepPool(1, owner, 1);
+        assertEq(t.ownerOf(8), owner);
+        vm.prank(owner);
+        vm.expectRevert(WeirTownies.PoolExhausted.selector);
+        t.sweepPool(1, owner, 1);
+        vm.prank(owner);
+        t.sweepGeneral(owner, 91); // 92 general, alice took one
+        assertEq(t.generalRemaining(), 0);
+        assertEq(t.ownerOf(100), owner);
+        vm.prank(owner);
+        vm.expectRevert(WeirTownies.SoldOut.selector);
+        t.sweepGeneral(owner, 1);
+        vm.prank(owner);
+        vm.expectRevert(WeirTownies.SaleIsOver.selector);
+        t.ownerMint(owner, 1);
+    }
+
     function test_ownable2Step() public {
         vm.prank(owner);
         t.transferOwnership(alice);

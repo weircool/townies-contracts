@@ -21,6 +21,13 @@ tier tokens live on Ethereum mainnet, so eligibility is a snapshot committed as 
 Merkle leaf: `keccak256(bytes.concat(keccak256(abi.encode(address))))`, the OpenZeppelin `StandardMerkleTree`
 encoding for `["address"]`; the app builds the trees with `@openzeppelin/merkle-tree`.
 
+## After the sale
+
+`endSale()` is one way: it closes every mint path and the phase for good. The owner may then `sweepGeneral` and
+`sweepPool` the ids nobody claimed, so the collection can still reach its full size. `freezeMetadata()` is one way
+too: no more base URI or renderer changes. `renounceOwnership` always reverts; ownership moves in two steps only.
+`setTreasury` carries the ERC-2981 receiver with it; the royalty is capped at 10%.
+
 ## Metadata and the renderer hook
 
 `tokenURI` is `baseURI + id` (the app's `/api/meta/<id>`), so attributes can be live. The owner may later point
@@ -52,8 +59,8 @@ key, objective "audit only, do not deploy"). Findings at medium or above are fix
 4. Verify on both explorers:
    - Blockscout: `forge verify-contract <addr> src/WeirTownies.sol:WeirTownies --chain-id 4663 --verifier blockscout --verifier-url https://robinhoodchain.blockscout.com/api/ --constructor-args $(cast abi-encode "constructor(address,address,uint256,bytes32,uint256,uint256)" ...)`
    - RobinScan (Etherscan V2): `--verifier etherscan --verifier-url "https://api.etherscan.io/v2/api?chainid=4663" --etherscan-api-key $ETHERSCAN_KEY`
-5. Configure with `script/Configure.s.sol` and `ACTION=layout | roots | poolroot | baseuri | updater | reserve | phase`
-   (see the file header), in that order; `phase` last, on launch day.
+5. Configure with `script/Configure.s.sol` and `ACTION=layout | seal | roots | poolroot | baseuri | updater | reserve |
+   phase | endsale | sweep` (see the file header): layout, inspect, seal, then the rest; `phase` last, on launch day.
 6. `scripts/townies/manifest.ts` in the app writes `public/townies/manifest.json` + the ABI for the mint page.
 
 Rehearse first with `MAX_SUPPLY=5`, a tiny price and a 3-address root on the real chain, then deploy for real.
