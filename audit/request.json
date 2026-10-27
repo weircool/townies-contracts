@@ -1,0 +1,20 @@
+{
+  "action": "launch.open",
+  "input": {
+    "objective": "Weir Townies: AUDIT ONLY. Review src/WeirTownies.sol from this repository as it arrives (do not edit src/, test/, foundry.toml or lib/) and report findings; do NOT deploy anything, do NOT create a token, pool, distributor or website. The owner deploys from script/Deploy.s.sol with their own key after findings at medium or above are fixed. Context: an ERC-721 (OpenZeppelin v5.5.0: ERC721, ERC721Enumerable, ERC2981, Ownable2Step, MerkleProof, ReentrancyGuard) for 3,333 tokens on Robinhood Chain (chainId 4663, Arbitrum Orbit, cancun). Token ids are laid out by the owner before the sale (setLayout, sealPools): an owner-minted reserve, then role pools each with its own Merkle root and a one-claim-per-wallet rule, then the general range sold first to a Merkle allowlist and then publicly at an ETH price with a per-wallet cap of 3. Metadata is off-chain at baseURI + id and the contract emits ERC-4906 events from an updater address. Money: msg.value must equal price x qty; withdraw() sends the balance to the treasury and anyone may call it. Please look hardest at: the id layout arithmetic (ranges never overlap, never exceed MAX_SUPPLY, no id minted twice), the Merkle leaf encoding (double keccak of abi.encode(address)) and proof misuse across pools, the per-wallet caps, reentrancy through _safeMint receivers, owner powers after the sale (nothing should touch sold tokens), and the withdraw path. Build: forge build && forge test (20 tests incl. fuzz and a reentrant receiver). Report any finding at medium or above and block on high or critical. Do not claim an independent audit.",
+    "shape": "chain",
+    "steps": [
+      { "skill": "audit-imported-code" },
+      { "skill": "adversarial-review" }
+    ],
+    "references": [
+      "eth-security",
+      "eth-testing",
+      "solidity-security-review",
+      "pashov-skill"
+    ],
+    "github": true,
+    "repoUrl": "https://github.com/weircool/townies-contracts.git",
+    "baseCommit": "<fill in after the subtree push>"
+  }
+}
