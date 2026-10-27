@@ -21,6 +21,13 @@ tier tokens live on Ethereum mainnet, so eligibility is a snapshot committed as 
 Merkle leaf: `keccak256(bytes.concat(keccak256(abi.encode(address))))`, the OpenZeppelin `StandardMerkleTree`
 encoding for `["address"]`; the app builds the trees with `@openzeppelin/merkle-tree`.
 
+## Metadata and the renderer hook
+
+`tokenURI` is `baseURI + id` (the app's `/api/meta/<id>`), so attributes can be live. The owner may later point
+`setRenderer(address)` at a contract implementing `tokenURI(uint256)`; from then on metadata (and the art, as an
+on-chain layer renderer) is served from chain, and `address(0)` switches back. Call `refreshAll()` after a switch
+so marketplaces re-read. The hook is the door to on-chain art after mint without a new collection.
+
 ## Build and test
 
 ```

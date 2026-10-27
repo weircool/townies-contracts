@@ -286,6 +286,23 @@ contract WeirTowniesTest is Test {
         assertTrue(t.supportsInterface(0x2a55205a)); // ERC-2981
     }
 
+    function test_rendererHook() public {
+        vm.prank(owner);
+        t.ownerMint(owner, 1);
+        FakeRenderer r = new FakeRenderer();
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, eve));
+        t.setRenderer(address(r));
+        vm.prank(owner);
+        t.setRenderer(address(r));
+        assertEq(t.tokenURI(1), "data:application/json;base64,eyJpZCI6MX0=");
+        vm.expectRevert(); // unminted ids still revert through the renderer path
+        t.tokenURI(2);
+        vm.prank(owner);
+        t.setRenderer(address(0));
+        assertEq(t.tokenURI(1), "https://town.weir.cool/api/meta/1");
+    }
+
     event MetadataUpdate(uint256 _tokenId);
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
@@ -371,6 +388,12 @@ contract WeirTowniesTest is Test {
         // the nested call reverted inside onERC721Received; _safeMint bubbles that up, so nothing was minted at all
         assertEq(t.balanceOf(address(r)), 0);
         assertTrue(r.sawRevert());
+    }
+}
+
+contract FakeRenderer {
+    function tokenURI(uint256 id) external pure returns (string memory) {
+        return id == 1 ? "data:application/json;base64,eyJpZCI6MX0=" : "";
     }
 }
 

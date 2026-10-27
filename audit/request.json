@@ -15,6 +15,6 @@
     ],
     "github": true,
     "repoUrl": "https://github.com/weircool/townies-contracts.git",
-    "baseCommit": "<fill in after the subtree push>"
+    "baseCommit": "814a8dabe11474dff52b9191639276ce89b92e2f"
   }
 }

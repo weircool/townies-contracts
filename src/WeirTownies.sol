@@ -9,6 +9,12 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
+/// @notice An optional on-chain metadata source. When the owner sets one, tokenURI asks it instead of the base URI,
+///         so the art can move on chain (a layer renderer) after mint without a new collection.
+interface ITownieRenderer {
+    function tokenURI(uint256 tokenId) external view returns (string memory);
+}
+
 /// @title Weir Townies
 /// @notice 3,333 pixel frogs who live and work in Weir town (town.weir.cool). Token ids are laid out in fixed ranges
 ///         by the generator before deploy and sealed by the provenance hash:
@@ -41,6 +47,7 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
     uint256 public publicPrice; // wei per token in the public phase
     bytes32 public allowlistRoot; // the general allowlist
     string private _baseTokenURI;
+    ITownieRenderer public renderer; // optional on-chain metadata source; zero = use the base URI
     address public updater; // may emit metadata refresh events
     address public treasury; // receives withdrawals and royalties
 
@@ -62,6 +69,7 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
     event PoolSet(uint256 indexed pool, uint32 start, uint32 size, bytes32 root);
     event PoolsSealed(uint32 reserveSize, uint32 generalStart);
     event BaseURISet(string uri);
+    event RendererSet(address renderer);
     event UpdaterSet(address updater);
     event TreasurySet(address treasury);
     event Withdrawn(address to, uint256 amount);
@@ -217,6 +225,7 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
 
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
         _requireOwned(tokenId);
+        if (address(renderer) != address(0)) return renderer.tokenURI(tokenId);
         return string.concat(_baseTokenURI, tokenId.toString());
     }
 
@@ -252,6 +261,13 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
     function setBaseURI(string calldata uri) external onlyOwner {
         _baseTokenURI = uri;
         emit BaseURISet(uri);
+    }
+
+    /// @notice Points tokenURI at an on-chain renderer (or back to the base URI with address(0)). Tell marketplaces
+    ///         with refreshAll() afterwards.
+    function setRenderer(address r) external onlyOwner {
+        renderer = ITownieRenderer(r);
+        emit RendererSet(r);
     }
 
     function setUpdater(address u) external onlyOwner {
