@@ -433,8 +433,50 @@ contract WeirTowniesTest is Test {
         vm.expectRevert(WeirTownies.SoldOut.selector);
         t.sweepGeneral(owner, 1);
         vm.prank(owner);
-        vm.expectRevert(WeirTownies.SaleIsOver.selector);
+        t.sweepPool(0, owner, 1); // the mayor pool nobody claimed
+        vm.prank(owner);
+        t.ownerMint(owner, 5); // the reserve can still be completed after the sale (audit round 2, medium)
+        assertEq(t.totalSupply(), MAX);
+        vm.prank(owner);
+        vm.expectRevert(WeirTownies.SoldOut.selector);
         t.ownerMint(owner, 1);
+    }
+
+    function test_endSaleAndSweepsNeedSealedLayout() public {
+        WeirTownies u = new WeirTownies(owner, treasury, MAX, PROV, AL_PRICE, PUB_PRICE);
+        vm.startPrank(owner);
+        vm.expectRevert(WeirTownies.PoolsNotSealed.selector);
+        u.endSale();
+        vm.expectRevert(WeirTownies.PoolsNotSealed.selector);
+        u.sweepGeneral(owner, 1);
+        vm.expectRevert(WeirTownies.PoolsNotSealed.selector);
+        u.sweepPool(0, owner, 1);
+        vm.stopPrank();
+    }
+
+    function test_rendererMustHaveCode() public {
+        vm.prank(owner);
+        vm.expectRevert(WeirTownies.BadRenderer.selector);
+        t.setRenderer(address(1));
+    }
+
+    function test_freezeRefusesDeadRenderer() public {
+        vm.prank(owner);
+        t.ownerMint(owner, 1);
+        DeadRenderer d = new DeadRenderer();
+        vm.prank(owner);
+        t.setRenderer(address(d));
+        vm.prank(owner);
+        vm.expectRevert(WeirTownies.BadRenderer.selector);
+        t.freezeMetadata();
+        assertFalse(t.metadataFrozen());
+        FakeRenderer good = new FakeRenderer();
+        vm.prank(owner);
+        t.setRenderer(address(good));
+        vm.prank(owner);
+        t.freezeMetadata();
+        assertTrue(t.metadataFrozen());
+        assertEq(t.tokenURI(1), "data:application/json;base64,eyJpZCI6MX0=");
     }
 
     function test_ownable2Step() public {
@@ -486,6 +528,12 @@ contract WeirTowniesTest is Test {
 contract FakeRenderer {
     function tokenURI(uint256 id) external pure returns (string memory) {
         return id == 1 ? "data:application/json;base64,eyJpZCI6MX0=" : "";
+    }
+}
+
+contract DeadRenderer {
+    function tokenURI(uint256) external pure returns (string memory) {
+        revert("dead");
     }
 }
 

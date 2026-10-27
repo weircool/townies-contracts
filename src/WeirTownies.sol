@@ -101,6 +101,7 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
     error SaleIsOver();
     error SaleNotOver();
     error Renounced();
+    error BadRenderer();
 
     constructor(
         address owner_,
@@ -179,11 +180,11 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
 
     // ---------- minting ----------
 
-    /// @notice The owner mints from the reserve (the 1/1s and the team's share) to any address, in any phase.
+    /// @notice The owner mints from the reserve (the 1/1s and the team's share) to any address, in any phase, and
+    ///         still after endSale: the reserve is owner-only and bounded by reserveSize, so it never reopens the sale.
     function ownerMint(address to, uint32 qty) external onlyOwner nonReentrant {
         if (!poolsSealed) revert PoolsNotSealed();
         if (qty == 0) revert ZeroQuantity();
-        if (saleEnded) revert SaleIsOver();
         if (uint256(reserveMinted) + qty > reserveSize) revert SoldOut();
         uint32 first = reserveMinted + 1;
         reserveMinted += qty;
@@ -232,9 +233,11 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
         for (uint256 i = 0; i < qty; i++) _safeMint(msg.sender, first + i);
     }
 
-    /// @notice Closes minting for good. After this the owner may sweep what nobody claimed, so the collection can
-    ///         still reach its full size; nothing minted is touched.
+    /// @notice Closes public and allowlist minting for good. After this the owner may sweep what nobody claimed and
+    ///         finish the reserve with ownerMint, so the collection can still reach its full size; nothing minted is
+    ///         touched. Needs a sealed layout, like every mint path.
     function endSale() external onlyOwner {
+        if (!poolsSealed) revert PoolsNotSealed();
         if (saleEnded) revert SaleIsOver();
         saleEnded = true;
         phase = Phase.Closed;
@@ -244,6 +247,7 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
 
     /// @notice After endSale: mints unsold general ids to `to`, oldest id first, up to `qty`.
     function sweepGeneral(address to, uint32 qty) external onlyOwner nonReentrant {
+        if (!poolsSealed) revert PoolsNotSealed();
         if (!saleEnded) revert SaleNotOver();
         if (qty == 0) revert ZeroQuantity();
         if (uint256(generalMinted) + qty > generalSize()) revert SoldOut();
@@ -254,6 +258,7 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
 
     /// @notice After endSale: mints the unclaimed ids of one role pool to `to`, up to `qty`.
     function sweepPool(uint256 poolIndex, address to, uint32 qty) external onlyOwner nonReentrant {
+        if (!poolsSealed) revert PoolsNotSealed();
         if (!saleEnded) revert SaleNotOver();
         if (qty == 0) revert ZeroQuantity();
         Pool storage p = _pools[poolIndex];
@@ -313,8 +318,18 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
         emit BaseURISet(uri);
     }
 
-    /// @notice One way: the base URI and the renderer can never change again.
+    /// @notice One way: the base URI and the renderer can never change again. Refuses to freeze on a renderer that
+    ///         cannot answer for a minted token, since that would make tokenURI revert for good.
     function freezeMetadata() external onlyOwner {
+        if (address(renderer) != address(0)) {
+            if (address(renderer).code.length == 0) revert BadRenderer();
+            if (totalSupply() > 0) {
+                try renderer.tokenURI(tokenByIndex(0)) returns (string memory) {}
+                catch {
+                    revert BadRenderer();
+                }
+            }
+        }
         metadataFrozen = true;
         emit MetadataFrozen();
     }
@@ -323,6 +338,7 @@ contract WeirTownies is ERC721, ERC721Enumerable, ERC2981, Ownable2Step, Reentra
     ///         with refreshAll() afterwards.
     function setRenderer(address r) external onlyOwner {
         if (metadataFrozen) revert MetadataIsFrozen();
+        if (r != address(0) && r.code.length == 0) revert BadRenderer();
         renderer = ITownieRenderer(r);
         emit RendererSet(r);
     }

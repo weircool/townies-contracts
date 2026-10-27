@@ -23,9 +23,11 @@ encoding for `["address"]`; the app builds the trees with `@openzeppelin/merkle-
 
 ## After the sale
 
-`endSale()` is one way: it closes every mint path and the phase for good. The owner may then `sweepGeneral` and
-`sweepPool` the ids nobody claimed, so the collection can still reach its full size. `freezeMetadata()` is one way
-too: no more base URI or renderer changes. `renounceOwnership` always reverts; ownership moves in two steps only.
+`endSale()` is one way: it closes the allowlist, public and role mints and the phase for good. The owner may then
+`sweepGeneral` and `sweepPool` the ids nobody claimed, and `ownerMint` still completes the reserve, so the collection
+can still reach its full size. `endSale` and both sweeps need the sealed layout like every other mint path.
+`freezeMetadata()` is one way too: no more base URI or renderer changes. `setRenderer` only accepts a contract, and
+`freezeMetadata` refuses to freeze on a renderer that cannot answer for a minted token. `renounceOwnership` always reverts; ownership moves in two steps only.
 `setTreasury` carries the ERC-2981 receiver with it; the royalty is capped at 10%.
 
 ## Metadata and the renderer hook
